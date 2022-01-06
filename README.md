@@ -7,7 +7,7 @@ Author: Emanuel D. Kästle
 emanuel.kaestle@fu-berlin.de
 
 ###########################
-# # # REFERENCES # # # 
+# REFERENCES #
 ###########################
 
 The following article should be cited by anyone who uses this code:
@@ -18,7 +18,7 @@ in the AlpArray network. Geophysical Journal International, 229(1), 151-170.
 
 
 ###########################
-# # # INSTRUCTIONS # # # 
+# INSTRUCTIONS #
 ###########################
 
 The Python scripts can be used to apply isotropic and azimuthally anisotropic Eikonal
