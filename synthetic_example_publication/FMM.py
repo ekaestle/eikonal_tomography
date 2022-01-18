@@ -87,40 +87,23 @@ def calculate_ttime_field(x,y,v,source,interpolate=True,refine_source_grid=True,
     
     Xnew,Ynew = np.meshgrid(xnew,ynew)
     
-    # with the new axis, the resulting traveltime field is equivalent to an interpolated
-    # travel time field on a shifted grid, using a nearest neighbour interpolation.
-    # This means that the source location is correct, with respect to the receiver.
-    # However, there will be an error in the velocity field (which is small for a smooth velocity field)
-    # otherwise: use a fast spline interpolation
     if interpolate or refine_source_grid:
-        #v_func = RegularGridInterpolator((x,y),v.T,method='linear',bounds_error=False,fill_value=None)
-        #v = v_func((Xnew,Ynew))
-        # Linear interpolation is more exact on very coarse grids...
         v_func = RectBivariateSpline(x,y,v.T)
         v = (v_func(xnew,ynew)).T
 
     # creating a finer grid around the source and doing the traveltime calculations
     # on this fine grid before expanding to the entire grid
     # gives slightly better results
+    create_testplots = False
     if refine_source_grid:
-                
-        # grid region to be refined, if the source is at the border, the region
-        # will be smaller
-        yidx0 = np.max([0,sourceidx[0]-pts_refine])
-        yidx1 = np.min([sourceidx[0]+pts_refine,len(ynew)-1])
-        xidx0 = np.max([0,sourceidx[1]-pts_refine])
-        xidx1 = np.min([sourceidx[1]+pts_refine,len(xnew)-1])
-        
         fine_factor = 20
+        xfine = np.linspace(xsource-pts_refine*dx,xsource+pts_refine*dx,fine_factor*2*pts_refine+1)
+        yfine = np.linspace(ysource-pts_refine*dy,ysource+pts_refine*dy,fine_factor*2*pts_refine+1)
         
-        xfine = np.linspace(xnew[xidx0],xnew[xidx1],(xidx1-xidx0)*fine_factor+1)
-        yfine = np.linspace(ynew[yidx0],ynew[yidx1],(yidx1-yidx0)*fine_factor+1)        
-        
-        # update 21.05.2021: it is now okay if the source is at the border,
-        # results should still be correct. The exception will not be raised
-        if np.min(xfine)<np.min(Xnew) or np.min(yfine)<np.min(Ynew) or np.max(xfine)>np.max(Xnew) or np.max(yfine)>np.max(Ynew):
-            raise Exception("WARNING: the source coordinate is too close to the border of the domain, this may cause errors when trying to refine the grid!")
-        
+        # limit the fine subaxis to the valid range
+        xfine = xfine[np.abs(xfine-np.min(xnew)).argmin():np.abs(xfine-np.max(xnew)).argmin()+1]
+        yfine = yfine[np.abs(yfine-np.min(ynew)).argmin():np.abs(yfine-np.max(ynew)).argmin()+1]
+                
         Xfine,Yfine = np.meshgrid(xfine,yfine)
         # we start with a perfectly circular traveltimefield which is centered
         # around the source at a distance of 1/4th of the minimum sampling
@@ -129,39 +112,39 @@ def calculate_ttime_field(x,y,v,source,interpolate=True,refine_source_grid=True,
         phi_fine = np.sqrt((Xfine-xsource)**2+(Yfine-ysource)**2)
         v_fine = (v_func(xfine,yfine)).T # v_func(tuple(np.meshgrid(xfine,yfine))) # (v_func(xfine,yfine)).T
         ttime_fine = skfmm.travel_time(phi_fine-radius, v_fine, dx=[dy/fine_factor,dx/fine_factor])
-        #ttime_inner = np.max(ttime_fine[phi_fine<radius])
         ttime_fine += radius/np.mean(v_fine[phi_fine<radius])
-        #ttime_fine[phi_fine<radius] = phi_fine[phi_fine<radius]/np.mean(v_fine[phi_fine<radius])
         
-        # # for testing       
-        # plt.figure()
-        # plt.pcolormesh(Xnew,Ynew,v,cmap=plt.cm.seismic_r,shading='nearest')
-        # plt.pcolormesh(xfine,yfine,v_fine,shading='nearest',cmap=plt.cm.seismic_r)
-        # cont = plt.contour(xfine,yfine,ttime_fine,levels=np.linspace(0,np.max(ttime_fine),90))
-        # #plt.contour(xfine,yfine,ttime_fine1,levels=np.linspace(0,np.max(ttime_fine),90),linestyles='dashed')
-        # plt.plot(source[0],source[1],'rv')
-        # plt.gca().set_aspect('equal')
-        # plt.colorbar(cont)
-        # plt.show()
+        if create_testplots:# for testing       
+            plt.figure()
+            plt.pcolormesh(Xnew,Ynew,v,cmap=plt.cm.seismic_r,shading='nearest')
+            plt.pcolormesh(xfine,yfine,v_fine,shading='nearest',cmap=plt.cm.seismic_r)
+            cont = plt.contour(xfine,yfine,ttime_fine,levels=np.linspace(0,np.max(ttime_fine),90))
+            #plt.contour(xfine,yfine,ttime_fine1,levels=np.linspace(0,np.max(ttime_fine),90),linestyles='dashed')
+            plt.plot(source[0],source[1],'rv')
+            plt.gca().set_aspect('equal')
+            plt.colorbar(cont)
+            plt.show()
         
-
         # from the traveltimes on the fine grid we have to find an iso-
         # velocity contour that can serve as input for the larger grid
         # this iso-velocity contour is normally smoother compared to the one
         # we would get from a calculation without the grid refinement                
         phi_coarse = np.ones_like(Xnew)*np.max(ttime_fine)
-        phi_coarse[yidx0:yidx1+1, xidx0:xidx1+1] = ttime_fine[::fine_factor,::fine_factor]
+        yidx0 = np.max([0,sourceidx[0]-pts_refine])
+        yidx1 = np.min([sourceidx[0]+pts_refine+1,len(ynew)])
+        xidx0 = np.max([0,sourceidx[1]-pts_refine])
+        xidx1 = np.min([sourceidx[1]+pts_refine+1,len(xnew)])
+        phi_coarse[yidx0:yidx1, xidx0:xidx1] = ttime_fine[::fine_factor,::fine_factor]
         
-        
-        # plt.figure()
-        # plt.pcolormesh(Xnew,Ynew,v,shading='nearest',cmap=plt.cm.seismic_r)
-        # levels=np.linspace(0,np.max(ttime_fine),30)
-        # cont=plt.contour(Xnew,Ynew,phi_coarse,linestyles='dashed',levels=levels)
-        # plt.contour(Xfine,Yfine,ttime_fine,linestyles='solid',levels=levels)
-        # plt.colorbar(cont)
-        # plt.gca().set_aspect('equal')
-        # plt.show()
-        
+        if create_testplots:
+            plt.figure()
+            plt.pcolormesh(Xnew,Ynew,v,shading='nearest',cmap=plt.cm.seismic_r)
+            levels=np.linspace(0,np.max(ttime_fine),30)
+            cont=plt.contour(Xnew,Ynew,phi_coarse,linestyles='dashed',levels=levels)
+            plt.contour(Xfine,Yfine,ttime_fine,linestyles='solid',levels=levels)
+            plt.colorbar(cont)
+            plt.gca().set_aspect('equal')
+            plt.show()
         
         # minimum traveltime to the border of the fine-grid region
         borderxmax = sourceidx[1]+pts_refine if sourceidx[1]+pts_refine < len(xnew) else 0
@@ -172,13 +155,15 @@ def calculate_ttime_field(x,y,v,source,interpolate=True,refine_source_grid=True,
                                   phi_coarse[borderymax, sourceidx[1]]))
         phi_coarse -= minborder_ttime
         
-        # plt.figure()
-        # plt.pcolormesh(Xnew,Ynew,v,shading='nearest',cmap=plt.cm.seismic_r)
-        # cont=plt.contour(Xnew,Ynew,phi_coarse,linestyles='dashed',levels=[-1,0,1])
-        # plt.contour(Xfine,Yfine,ttime_fine,linestyles='solid',levels=[minborder_ttime-1,minborder_ttime,minborder_ttime+1])
-        # plt.colorbar(cont)
-        # plt.gca().set_aspect('equal')
-        # plt.show()
+        if create_testplots:
+            plt.figure()
+            plt.pcolormesh(Xnew,Ynew,v,shading='nearest',cmap=plt.cm.seismic_r)
+            cont=plt.contour(Xnew,Ynew,phi_coarse,linestyles='dashed',levels=[-1,0,1])
+            plt.contour(Xfine,Yfine,ttime_fine,linestyles='solid',
+                        levels=[minborder_ttime-1,minborder_ttime,minborder_ttime+1])
+            plt.colorbar(cont)
+            plt.gca().set_aspect('equal')
+            plt.show()
         
         try:
             ttime_field = skfmm.travel_time(phi_coarse, v, dx=[dy,dx])
@@ -186,11 +171,148 @@ def calculate_ttime_field(x,y,v,source,interpolate=True,refine_source_grid=True,
             print("had to reduce order")
             ttime_field = skfmm.travel_time(phi_coarse, v,order=1, dx=[dy,dx])
         ttime_field += minborder_ttime
-        ttime_field[yidx0:yidx1+1, xidx0:xidx1+1] = ttime_fine[::fine_factor,::fine_factor]
+        ttime_field[yidx0:yidx1, xidx0:xidx1] = ttime_fine[::fine_factor,::fine_factor]
                    
     else:
         phi = (Xnew-xsource)**2 + (Ynew-ysource)**2# - (dx/1000.)**2
         phi[sourceidx[0],sourceidx[1]] *= -1
+        try:
+            ttime_field = skfmm.travel_time(phi, v, dx=[dy,dx])
+        except:
+            #print("had to reduce order")
+            ttime_field = skfmm.travel_time(phi, v,order=1, dx=[dy,dx])
+
+    if create_testplots: # for testing
+        plt.figure()
+        ax = plt.gca()
+        plt.pcolormesh(Xnew,Ynew,v,shading='nearest',cmap=plt.cm.seismic_r)
+        levels = np.linspace(0,np.max(ttime_field),80)
+        plt.contour(xnew,ynew,ttime_field,levels=levels,label='after grid refinement')
+        #plt.legend(loc='upper right')
+        #plt.contour(xnew,ynew,ttime_field2,linestyles='dashed',levels=levels,label='before grid refinement')
+        #plt.contour(xnew,ynew,np.sqrt(phi)/3.8,linestyles='dotted',levels=80,label='homogeneous velocity contours')
+        ax.set_aspect('equal')
+        plt.show()
+        
+        
+    return xnew,ynew,ttime_field
+
+
+# this is the same as above, but the input and output grids are identical
+# the ttime field is less exact but the calculations are faster and the further
+# use is simpler.
+def calculate_ttime_field_samegrid(X,Y,v,source,refine_source_grid=True,pts_refine=5):
+        
+    xsource = source[0]
+    ysource = source[1]
+    x = X[0]
+    y = Y[:,0]  
+    dx = x[1]-x[0]
+    dy = y[1]-y[0]
+    
+    if xsource > np.max(x) or xsource < np.min(x) or ysource > np.max(y) or ysource < np.min(y):
+        raise Exception("Source must be within the coordinate limits!")
+    
+    if refine_source_grid:
+        v_func = RectBivariateSpline(x,y,v.T)
+
+    # creating a finer grid around the source and doing the traveltime calculations
+    # on this fine grid before expanding to the entire grid
+    # gives slightly better results
+    if refine_source_grid:
+        fine_factor = 20
+        xfine = np.linspace(xsource-pts_refine*dx,xsource+pts_refine*dx,fine_factor*2*pts_refine+1)
+        yfine = np.linspace(ysource-pts_refine*dy,ysource+pts_refine*dy,fine_factor*2*pts_refine+1)
+        
+        Xfine,Yfine = np.meshgrid(xfine,yfine)
+        # we start with a perfectly circular traveltimefield which is centered
+        # around the source at a distance of 1/4th of the minimum sampling
+        # distance.
+        radius = np.min((dx,dy))/4.
+        phi_fine = np.sqrt((Xfine-xsource)**2+(Yfine-ysource)**2)
+        v_fine = (v_func(xfine,yfine)).T # v_func(tuple(np.meshgrid(xfine,yfine))) # (v_func(xfine,yfine)).T
+        ttime_fine = skfmm.travel_time(phi_fine-radius, v_fine, dx=[dy/fine_factor,dx/fine_factor])
+        ttime_fine += radius/np.mean(v_fine[phi_fine<radius])
+        # this last line is not really necessary:
+        ttime_fine[phi_fine<radius] = phi_fine[phi_fine<radius]/np.mean(v_fine[phi_fine<radius])
+        
+        # # for testing
+        # plt.figure()
+        # ax = plt.gca()
+        # plt.pcolormesh(X,Y,v,shading='nearest',cmap=plt.cm.seismic_r)
+        # plt.pcolormesh(Xfine,Yfine,v_fine,shading='nearest',cmap=plt.cm.seismic_r)
+        # plt.plot(X.flatten(),Y.flatten(),'k.')
+        # plt.contour(xfine,yfine,ttime_fine,levels=np.linspace(0,50,80))
+        # ttime_fine2 = skfmm.travel_time(phi_fine, v_fine, dx=[dy/fine_factor,dx/fine_factor])
+        # plt.contour(xfine,yfine,ttime_fine2,linestyles='dashed',levels=np.linspace(0,50,80))
+        # plt.plot(xsource,ysource,'rv')
+        # ax.set_aspect('equal')
+        # plt.show()
+        
+        # from the traveltimes on the fine grid we have to find an iso-
+        # velocity contour that can serve as input for the larger grid
+        # this iso-velocity contour is normally smoother compared to the one
+        # we would get from a calculation without the grid refinement                
+        ttime_fine_func = RegularGridInterpolator((xfine,yfine),ttime_fine.T,
+                                                  method='nearest',bounds_error=False)
+        phi_coarse = ttime_fine_func((X,Y))
+        # find the largest closed contour [TOO SLOW]
+        # plt.ioff()
+        # levels=np.linspace(0,np.max(phi_fine)/np.mean(v_fine),20)
+        # cset = plt.contour(xfine, yfine, ttime_fine,levels=levels)
+        # # Iterate over all the contour segments and find the largest
+        # stop = False
+        # for i, segs in enumerate(cset.allsegs[::-1]):
+        #     for j, seg in enumerate(segs):
+        #         # First make sure it's closed
+        #         if (seg[0]-seg[-1]).any():
+        #             continue
+        #         else:
+        #             stop = True
+        #             break
+        #     if stop:
+        #         contour_ttime = levels[::-1][i]
+        #         break
+
+        # minimum traveltime to the border of the fine-grid region
+        sourceidx = np.array([np.argmin(np.abs(y-ysource)),np.argmin(np.abs(x-xsource))])
+        # ignore the contour levels that are too close to the border of the domain
+        # 0.9 as safety margin
+        contour_ttime = 0.9*np.min((np.nanmax(phi_coarse[sourceidx[0]:,sourceidx[1]] if len(y)-sourceidx[0] > pts_refine else np.max(ttime_fine)),
+                                    np.nanmax(phi_coarse[:sourceidx[0],sourceidx[1]] if sourceidx[0] >= pts_refine else np.max(ttime_fine)),
+                                    np.nanmax(phi_coarse[sourceidx[0],sourceidx[1]:] if len(x)-sourceidx[1] > pts_refine else np.max(ttime_fine)),
+                                    np.nanmax(phi_coarse[sourceidx[0],:sourceidx[1]] if sourceidx[1] >= pts_refine else np.max(ttime_fine))))
+        phi_coarse -= contour_ttime
+        phi_coarse[np.isnan(phi_coarse)] = np.nanmax(phi_coarse)
+        
+        # # for testing
+        # plt.figure()
+        # ax = plt.gca()
+        # #phi_coarse[np.isnan(phi_coarse)] = np.nanmax(phi_coarse)
+        # cbar = plt.tricontourf(X.flatten(),Y.flatten(),phi_coarse.flatten(),
+        #                         cmap=plt.cm.seismic,levels=np.arange(-50,51,1))
+        # plt.plot(X.flatten(),Y.flatten(),'k.')
+        # plt.contour(xfine,yfine,ttime_fine,levels=np.linspace(0,50,50))
+        # plt.contour(x,y,phi_coarse,linestyles='dashed',levels=np.linspace(0,50,50))
+        # plt.plot(xsource,ysource,'rv')
+        # ax.set_aspect('equal')
+        # plt.colorbar(cbar)
+        # plt.show()
+        
+        try:
+            ttime_field = skfmm.travel_time(phi_coarse, v, dx=[dy,dx])
+        except:
+            print("had to reduce order")
+            ttime_field = skfmm.travel_time(phi_coarse, v,order=1, dx=[dy,dx])
+        ttime_field += contour_ttime
+        ttime_field[phi_coarse<=0] = phi_coarse[phi_coarse<=0]+contour_ttime
+        
+    else:
+        phi = (X-xsource)**2 + (Y-ysource)**2
+        phi[sourceidx[0],sourceidx[1]] *= -1
+        if np.min(np.abs(source[0]-x)) > dx/10 and np.min(np.abs(source[1]-y)) > dy/10.:
+            print("Warning: refine_source_grid should be set to 'True' if the source "+
+                  "location does not coincide exactly with one of the points of the grid.")
         try:
             ttime_field = skfmm.travel_time(phi, v, dx=[dy,dx])
             #ttime_field1 = skfmm.travel_time(phi, v,order=1, dx=[dy,dx]) 
@@ -202,19 +324,21 @@ def calculate_ttime_field(x,y,v,source,interpolate=True,refine_source_grid=True,
     # # for testing
     # plt.figure()
     # ax = plt.gca()
-    # plt.pcolormesh(Xnew,Ynew,v,shading='nearest',cmap=plt.cm.seismic_r)
-    # levels = np.linspace(0,np.max(ttime_field),80)
-    # plt.contour(xnew,ynew,ttime_field,levels=levels,label='after grid refinement')
-    # #plt.contour(xnew,ynew,ttime_field2,linestyles='dashed',levels=levels,label='before grid refinement')
+    # plt.plot(X.flatten(),Y.flatten(),'k.')
+    # plt.contour(x,y,ttime_field,levels=np.linspace(0,np.max(ttime_field),80),label='with grid refinement')
+    # phi = (X-xsource)**2 + (Y-ysource)**2# - (dx/1000.)**2
+    # phi[sourceidx[0],sourceidx[1]] *= -1
+    # ttime_field2 = skfmm.travel_time(phi, v, dx=[dy,dx])
+    # plt.contour(x,y,ttime_field2,linestyles='dashed',
+    #             levels=np.linspace(0,np.max(ttime_field),80),label='without grid refinement')
     # #plt.contour(xnew,ynew,np.sqrt(phi)/3.8,linestyles='dotted',levels=80,label='homogeneous velocity contours')
+    # plt.plot(xsource,ysource,'rv')
     # ax.set_aspect('equal')
-    # #plt.legend(loc='upper right')
+    # plt.legend(loc='upper right')
+    # plt.colorbar()
     # plt.show()
         
-#    if extended_grid:
-#        return xnew,ynew,ttime_field#[2:-2,2:-2]
-#    else:
-    return xnew,ynew,ttime_field
+    return ttime_field
 
 
 def shoot_ray(x,y,ttimefield,source,receivers,stepsize=0.33):
@@ -310,7 +434,7 @@ def shoot_ray(x,y,ttimefield,source,receivers,stepsize=0.33):
             print("source:",source,"receiver:",receiver)
             raise Exception()
         path.append([source[0],source[1]])
-        path_list.append(np.array(path))
+        path_list.append(np.array(path)[::-1])
     return path_list
     #ALTERNATIVE setting it up as initial value problem. is slower
 #    def event(t,xy):
